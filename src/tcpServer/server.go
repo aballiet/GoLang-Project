@@ -4,9 +4,10 @@ import "net"
 import "fmt"
 import "bufio"
 import "strings" // only needed below for sample processing
-import "sync"
 
-var tabUser = make(map[string]string)
+var tabUser = make(map[string]net.Conn)
+var myChan = make(chan string)
+
 const servername = "ChatTC"
 
 func main() {
@@ -17,32 +18,34 @@ func main() {
 	// listen on all interfaces
 	ln, _ := net.Listen("tcp", ":8081")
 
-	// accept connection on port
-	var wg sync.WaitGroup
-	conn, _ := ln.Accept()
-	wg.Add(1)
-	go read(conn)
-	wg.Wait()
-	
+	//on ne quitte pas le main tant que la go routine n'a pas terminé
+	//var wg sync.WaitGroup
+
+	for i:=0; i<10; i++{
+		go sendMessage()
+	}
+
+	for{
+		// accept connection on port
+		conn, _ := ln.Accept()
+		go read(conn)
+	}
 }
 
-
-func read(conn net.Conn){
+func read(conn net.Conn) {
 	//on envoie un message de welcome
-	welcome_message :="TCCHAT_WELCOME\t"+servername + "\n"
+	welcome_message := "TCCHAT_WELCOME\t" + servername + "\n"
 	conn.Write([]byte(welcome_message))
-	
+
 	// run loop forever (or until ctrl-c)
 	for {
 		// will listen for message to process ending in newline (\n)
 		message, _ := bufio.NewReader(conn).ReadString('\n')
 		managemessage(message, conn)
-		// output message received
-		fmt.Print("Message Received:", string(message))
 	}
 }
 
-func managemessage(message string, conn net.Conn ){
+func managemessage(message string, conn net.Conn) {
 	const Register = "TCCHAT_REGISTER"
 	const Message = "TCCHAT_MESSAGE"
 	const Disconnect = "TCCHAT_DISCONNECT"
@@ -55,17 +58,24 @@ func managemessage(message string, conn net.Conn ){
 
 	switch tabMessage[0] {
 
-	case Welcome:
-		fmt.Print("Bienvenue sur le serveur !")
+	
 	case Register:
-		//il faut envoyer le userId à tous les autres utilisateurs
+		//il faut envoyer le userId à tous les autres utilisateurs avec USERIN
+		for user,_ := range(tabUser){
+			myChan <- UserIn+"\t"+tabMessage[1]+"@"+user
+		}
+
 		//on ajoute au tableau le nouveau utilisateur
-		tabUser[string(conn.RemoteAddr())]=tabMessage[1]
-		fmt.Print(tabUser)
+		tabUser[tabMessage[1]] = conn
+		fmt.Println("Un nouvel utilisateur connecté : " + tabMessage[1])
+
 		//enregistrement du nickname dans les utilisateurs actifs
 		//If second message with same nickname -> terminate connection with client
 
 	case Message:
+		for user,_ := range(tabUser){
+			myChan <- Message+"\t"+tabMessage[1]+"@"+user
+		}
 		//140 characters (verifier length payload)
 		//on broadcast by server -> all clients  attention elle peut contenir "\t" !!!!
 
@@ -76,3 +86,17 @@ func managemessage(message string, conn net.Conn ){
 	}
 }
 
+func sendMessage(){
+	for {
+		// on lit dans le channel : nom utilisateur + message
+		command := <- myChan
+		fmt.Println(command)
+		tab := strings.Split(command, "@")
+		conn := tabUser[tab[1]]
+		fmt.Println(tab[0])
+		conn.Write([]byte(tab[0]))
+		fmt.Println("sent !")
+
+	}
+
+}
